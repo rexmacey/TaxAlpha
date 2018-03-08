@@ -1,0 +1,186 @@
+---
+title: "Part 1: How much alpha is needed to cover your taxes"
+author: "Red Tortoise, LLC"
+date: "March 7, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = "")
+library(knitr, quietly = TRUE)
+```
+
+## Introduction
+
+How much more expected return is required to justify the turnover and the taxes that must be paid immediately?  That's the question we will explore.  Here in Part 1 we begin with a simple example and build the tools to better address the question. In Part 2 we explore how the answer varies with a variety of inputs. This document is intended as an example to introduce R especially to investment professionals.  As a spoiler, there is not much analysis we do in this part that can't be done in Excel.  However Part 2 builds on this to go well beyond Excel (at least without using Excel's VBA). Also this entire document was created using R which couldn't be done as easily in Excel.    
+
+## A set of assumptions
+```{r initial_assumptions, comment = "* "}
+taxRateDiv <- 0.25  # Dividends are taxed at 25%
+taxRateLTCG <- 0.25 # Capital gains are taxed at 25%
+horizon <- 10 # The time horizon is 10 years
+basicPct <- 0.75 # The cost basis of the asset is 75% of its value (a 33% unrealized gain)
+dividendYld <- 0.02 # The dividend yield is 2% annually
+appreciation <- 0.03 # The capital appreciation is 3% annually
+```
+
+# The simple model
+If we hold our portfolio (not incurring capital gains), what will its after-tax value be over our horizon?  Each year we will receive the dividend, pay taxes on it, and reinvest the remainder increasing our basis.  The value will appreciate.  At the end of the horizon, we assume we sell the entire position, pay capital gains and calculate the remainder. For years zero through 10 the value are shown in the following table where AT would be the after-tax value were we to liquidate at the end of that year.   
+```{r hold}
+initValue <- 100
+initBasis <- initValue * basicPct
+holdScenario <- matrix(0,nrow = horizon+1, ncol = 6,
+                       dimnames = list(0:horizon,
+                                    c("Value","Basis","Dividend","Tax","Growth","AT")))
+holdScenario[1,"Value"] <- initValue # an intial starting value
+holdScenario[1,"Basis"] <- initBasis # initial basis
+for (i in 2:(horizon+1)){
+    holdScenario[i,"Dividend"] <- holdScenario[i-1,"Value"]*dividendYld
+    holdScenario[i,"Tax"] <- holdScenario[i,"Dividend"] * taxRateDiv
+    holdScenario[i,"Growth"] <- holdScenario[i-1,"Value"]*appreciation
+    holdScenario[i,"Value"] <- holdScenario[i-1,"Value"]+holdScenario[i,"Dividend"] -
+        holdScenario[i,"Tax"]+holdScenario[i,"Growth"]
+    holdScenario[i,"Basis"] <- holdScenario[i-1,"Basis"]+holdScenario[i,"Dividend"] -
+        holdScenario[i,"Tax"]
+    holdScenario[i,"AT"] <- holdScenario[i,"Value"] - 
+        (holdScenario[i,"Value"]-holdScenario[i,"Basis"])*taxRateLTCG
+}
+
+kable(holdScenario, digits=2, caption = "Hold Scenario")
+```
+
+Below we encapsulate the above code into a function and make the initial value and basis parameters which will make our life easier later and no longer make the basicPct parameter necessary.  Functions are powerful because they can be called repeatedly.  
+
+
+```{r}
+ATValue <- function(initValue=100,
+                    initBasis=100,
+                    taxRateDiv, 
+                    taxRateLTCG, 
+                    horizon = 10, 
+                    dividendYld, 
+                    appreciation){
+    out <- matrix(0,nrow = horizon+1, ncol = 6,
+                       dimnames = list(0:horizon,
+                                    c("Value","Basis","Dividend","Tax","Growth","AT")))
+    out[1,"Value"] <- initValue # an intial starting value
+    out[1,"Basis"] <- initBasis # initial basis
+    for (i in 2:(horizon+1)){
+        out[i,"Dividend"] <- out[i-1,"Value"]*dividendYld
+        out[i,"Tax"] <- out[i,"Dividend"] * taxRateDiv
+        out[i,"Growth"] <- out[i-1,"Value"]*appreciation
+        out[i,"Value"] <- out[i-1,"Value"]+out[i,"Dividend"] -
+            out[i,"Tax"]+out[i,"Growth"]
+        out[i,"Basis"] <- out[i-1,"Basis"]+out[i,"Dividend"] -
+            out[i,"Tax"]
+        out[i,"AT"] <- out[i,"Value"] - 
+            (out[i,"Value"]-out[i,"Basis"])*taxRateLTCG
+    }
+    return(out)
+}
+```
+
+To make our code easier to read, we are going to put our assumptions into a list.  We'll use different lists to create two scenarios representing hold and liquidate.
+```{r}
+createScenario <- function(initValue=100, 
+                           initBasis=100, 
+                           dividendYld, 
+                           appreciation, 
+                           taxRateDiv, 
+                           taxRateLTCG,
+                           horizon=10){
+    out<-list(initValue, 
+           initBasis, 
+           dividendYld, 
+           appreciation, 
+           taxRateDiv, 
+           taxRateLTCG,
+           horizon)
+    names(out) <- c("initValue", 
+           "initBasis", 
+           "dividendYld", 
+           "appreciation", 
+           "taxRateDiv", 
+           "taxRateLTCG",
+           "horizon")
+    return(out)
+}
+```
+
+# Hold vs. Liquidate    
+Below we run and display the results if we hold and if we sell immediately (liquidate). In the liquidate scenario the intial value and intial basis are set to 100 - (100-100*basicPct)*taxRateLTCG which would be the value left after paying taxes if we sold immediately. 
+
+```{r function_examples}
+h <- createScenario(initValue, initValue*basicPct, dividendYld, 
+                       appreciation, taxRateDiv, taxRateLTCG, horizon)
+hold <- ATValue(h$initValue, h$initBasis, h$taxRateDiv, h$taxRateLTCG, h$horizon, 
+                h$dividendYld, h$appreciation)
+initValueLiquidate <- initValue - (initValue - initBasis) * taxRateLTCG
+l <- createScenario(initValueLiquidate, initValueLiquidate, dividendYld, 
+                       appreciation, taxRateDiv, taxRateLTCG, horizon)
+liquidate <- ATValue(l$initValue, l$initBasis, l$taxRateDiv, l$taxRateLTCG, l$horizon, 
+                l$dividendYld, l$appreciation)
+kable(hold, digits=2, caption = "Hold Scenario (function example")
+kable(liquidate, digits=2, caption = "Liquidate Scenario")
+```
+
+# Getting to an Answer
+We're now a good deal closer to answering the question how much more return do we need?  The ATValue function returns a matrix the last row of which contains the after-tax value in the field called AT.  We need to find the return that causes terminal the after-tax values to be identical.  The difference between this return and our initial return is our ultimate answer.  To make the taxes more realistic, we have decomposed the return in to dividend yield and appreciation.  For this example, we will just solve for appreciation.  
+
+The first thing we'll do is create a new function to calculate the difference between the "liquidate" terminal after-tax value and the "hold" terminal after-tax value. We add a digits parameter which is the number of digits to round the result to. Then we'll use a built-in function *uniroot* in R to find the appreciation value for the liquidate scenarios that sets the value of the difference function to zero (i.e. the root).  The uniroot function finds x such that f(x) is zero.  We want x to represent the appreciation in the liquidate scenario.  In the function below, if x is NULL we ignore x; otherwise we make the appreciation value in the liquidateScenario equal to x.  This is to make it work with the uniroot function which will vary x and also to allow the function to work when we just want to know the difference in terminal values when we know the appreciation rate.
+
+```{r}
+DifferenceLiquidateAndHold <- function(x=NULL,
+                    holdScenario,
+                    liquidateScenario,
+                    digits=4){
+if(!is.null(x)) liquidateScenario$appreciation <- x
+hold <- ATValue(holdScenario$initValue, holdScenario$initBasis, holdScenario$taxRateDiv, 
+                holdScenario$taxRateLTCG, holdScenario$horizon, 
+                holdScenario$dividendYld, holdScenario$appreciation)
+liquidate <- ATValue(liquidateScenario$initValue, liquidateScenario$initBasis, 
+                     liquidateScenario$taxRateDiv, 
+                     liquidateScenario$taxRateLTCG, liquidateScenario$horizon, 
+                     liquidateScenario$dividendYld, liquidateScenario$appreciation)
+return(round(liquidate[horizon+1,"AT"]-hold[horizon+1,"AT"],digits))
+}
+```
+
+Let's check the difference function.  It should produce `r round(liquidate[horizon+1,"AT"],4)` - `r round(hold[horizon+1,"AT"],4)` = `r round(liquidate[horizon+1,"AT"] - hold[horizon+1,"AT"],4)`.  
+
+```{r}
+resultLiquidateMinusHold <- DifferenceLiquidateAndHold(NULL,h,l,6)
+```
+It produces `r resultLiquidateMinusHold`.
+
+So now we'll make a function to calculate the appreciation that sets the diffence to zero.
+
+```{r}
+appreciationRoot <- function(holdScenario, liquidateScenario, digits=4){
+    result <- uniroot(DifferenceLiquidateAndHold,c(-.25,1),
+                      holdScenario,
+                      liquidateScenario,
+                      digits)
+    return(result)
+}
+
+exampleRoot <- appreciationRoot(h,l, digits = 6)
+```
+
+The appreciation needed to make the terminal after-tax values match is `r round(100*exampleRoot$root,3)`%.  This is an additional appreciation of `r round(100*( 
+exampleRoot$root - h$appreciation),3)`%. To check that this is correct, we show the tables using the original hold scenario and the liquidate scenario with this higher appreciation rate.  Only the last AT values need to match.
+
+```{r}
+hold <- ATValue(h$initValue, h$initBasis, h$taxRateDiv, 
+                h$taxRateLTCG, h$horizon, 
+                h$dividendYld, h$appreciation)
+liquidate <- ATValue(l$initValue, l$initBasis, 
+                     l$taxRateDiv, 
+                     l$taxRateLTCG, l$horizon, 
+                     l$dividendYld, exampleRoot$root)
+kable(hold, digits=2, caption = "Hold Scenario (function example")
+kable(liquidate, digits=2, caption = "Liquidate Scenario")
+```
+
+An excellent article on the subject is [Is Your Alpha Big Enough to Cover Its Taxes? Revisited](https://customcore.parametricportfolio.com/File/Download?filename=Is%20Your%20Alpha%20Big%20Enough%20To%20Cover%20Its%20Taxes%20Revisited.pdf) by Arnott, Berkin and Bouchey, 2011 _Investments & Wealth Monitor_. 
+
